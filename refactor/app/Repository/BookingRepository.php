@@ -26,6 +26,7 @@ use Monolog\Handler\StreamHandler;
 use Illuminate\Support\Facades\Log;
 use Monolog\Handler\FirePHPHandler;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 /**
  * Class BookingRepository
@@ -58,6 +59,8 @@ class BookingRepository extends BaseRepository
     public function getUsersJobs($user_id)
     {
         $cuser = User::find($user_id);
+        if(is_null($cuser))
+            return false;
         $usertype = '';
         $emergencyJobs = array();
         $noramlJobs = array();
@@ -98,6 +101,8 @@ class BookingRepository extends BaseRepository
             $pagenum = "1";
         }
         $cuser = User::find($user_id);
+        if(is_null($cuser))
+            return false;
         $usertype = '';
         $emergencyJobs = array();
         $noramlJobs = array();
@@ -132,14 +137,14 @@ class BookingRepository extends BaseRepository
         $consumer_type = $user->userMeta->consumer_type;
         if ($user->user_type == env('CUSTOMER_ROLE_ID')) {
             $cuser = $user;
-
+            
             if (!isset($data['from_language_id'])) {
                 $response['status'] = 'fail';
                 $response['message'] = "Du måste fylla in alla fält";
                 $response['field_name'] = "from_language_id";
                 return $response;
             }
-            if ($data['immediate'] == 'no') {
+            if ($data['immediate'] == 'no') {                
                 if (isset($data['due_date']) && $data['due_date'] == '') {
                     $response['status'] = 'fail';
                     $response['message'] = "Du måste fylla in alla fält";
@@ -172,19 +177,10 @@ class BookingRepository extends BaseRepository
                     return $response;
                 }
             }
-            if (isset($data['customer_phone_type'])) {
-                $data['customer_phone_type'] = 'yes';
-            } else {
-                $data['customer_phone_type'] = 'no';
-            }
 
-            if (isset($data['customer_physical_type'])) {
-                $data['customer_physical_type'] = 'yes';
-                $response['customer_physical_type'] = 'yes';
-            } else {
-                $data['customer_physical_type'] = 'no';
-                $response['customer_physical_type'] = 'no';
-            }
+            $data['customer_phone_type'] = isset($data['customer_phone_type']) ? 'yes': 'no';
+            $data['customer_physical_type'] = isset($data['customer_physical_type']) ? 'yes': 'no';
+            $response['customer_physical_type'] = isset($data['customer_physical_type']) ? 'yes': 'no';            
 
             if ($data['immediate'] == 'yes') {
                 $due_carbon = Carbon::now()->addMinute($immediatetime);
@@ -285,39 +281,44 @@ class BookingRepository extends BaseRepository
      */
     public function storeJobEmail($data)
     {
-        $user_type = $data['user_type'];
-        $job = Job::findOrFail(@$data['user_email_job_id']);
-        $job->user_email = @$data['user_email'];
-        $job->reference = isset($data['reference']) ? $data['reference'] : '';
-        $user = $job->user()->get()->first();
-        if (isset($data['address'])) {
-            $job->address = ($data['address'] != '') ? $data['address'] : $user->userMeta->address;
-            $job->instructions = ($data['instructions'] != '') ? $data['instructions'] : $user->userMeta->instructions;
-            $job->town = ($data['town'] != '') ? $data['town'] : $user->userMeta->city;
-        }
-        $job->save();
+        $user_type = $data['user_type'] ?? "";
+        try {
+            if(empty($data['user_email_job_id']))
+                return false;
+            $job = Job::findOrFail($data['user_email_job_id']);
+            $job->user_email = $data['user_email'] ?? "";
+            $job->reference = isset($data['reference']) ? $data['reference'] : '';
+            $user = $job->user()->get()->first();
+            if (isset($data['address'])) {
+                $job->address = ($data['address'] != '') ? $data['address'] : $user->userMeta->address;
+                $job->instructions = ($data['instructions'] != '') ? $data['instructions'] : $user->userMeta->instructions;
+                $job->town = ($data['town'] != '') ? $data['town'] : $user->userMeta->city;
+            }
+            $job->save();
 
-        if (!empty($job->user_email)) {
-            $email = $job->user_email;
-            $name = $user->name;
-        } else {
-            $email = $user->email;
-            $name = $user->name;
-        }
-        $subject = 'Vi har mottagit er tolkbokning. Bokningsnr: #' . $job->id;
-        $send_data = [
-            'user' => $user,
-            'job'  => $job
-        ];
-        $this->mailer->send($email, $name, $subject, 'emails.job-created', $send_data);
+            if (!empty($job->user_email)) {
+                $email = $job->user_email;
+                $name = $user->name;
+            } else {
+                $email = $user->email;
+                $name = $user->name;
+            }
+            $subject = 'Vi har mottagit er tolkbokning. Bokningsnr: #' . $job->id;
+            $send_data = [
+                'user' => $user,
+                'job'  => $job
+            ];
+            $this->mailer->send($email, $name, $subject, 'emails.job-created', $send_data);
 
-        $response['type'] = $user_type;
-        $response['job'] = $job;
-        $response['status'] = 'success';
-        $data = $this->jobToData($job);
-        Event::fire(new JobWasCreated($job, $data, '*'));
-        return $response;
-
+            $response['type'] = $user_type;
+            $response['job'] = $job;
+            $response['status'] = 'success';
+            $data = $this->jobToData($job);
+            Event::fire(new JobWasCreated($job, $data, '*'));
+            return $response;
+        } catch(ModelNotFoundException $e) {
+            return false;
+        }        
     }
 
     /**
@@ -328,8 +329,8 @@ class BookingRepository extends BaseRepository
     {
 
         $data = array();            // save job's information to data for sending Push
-        $data['job_id'] = $job->id;
-        $data['from_language_id'] = $job->from_language_id;
+        $data['job_id'] = $job->id ?? ""; //Can use conditinal operators in case of not set or undesired value
+        $data['from_language_id'] = $job->from_language_id ?? "";
         $data['immediate'] = $job->immediate;
         $data['duration'] = $job->duration;
         $data['status'] = $job->status;
@@ -382,7 +383,7 @@ class BookingRepository extends BaseRepository
     public function jobEnd($post_data = array())
     {
         $completeddate = date('Y-m-d H:i:s');
-        $jobid = $post_data["job_id"];
+        $jobid = $post_data["job_id"] ?? 0;
         $job_detail = Job::with('translatorJobRel')->find($jobid);
         $duedate = $job_detail->due;
         $start = date_create($duedate);
@@ -1380,48 +1381,56 @@ class BookingRepository extends BaseRepository
     public function acceptJob($data, $user)
     {
 
+        $response = array();
         $adminemail = config('app.admin_email');
         $adminSenderEmail = config('app.admin_sender_email');
 
         $cuser = $user;
         $job_id = $data['job_id'];
-        $job = Job::findOrFail($job_id);
-        if (!Job::isTranslatorAlreadyBooked($job_id, $cuser->id, $job->due)) {
-            if ($job->status == 'pending' && Job::insertTranslatorJobRel($cuser->id, $job_id)) {
-                $job->status = 'assigned';
-                $job->save();
-                $user = $job->user()->get()->first();
-                $mailer = new AppMailer();
+        try {
+            $job = Job::findOrFail($job_id);
+            if (!Job::isTranslatorAlreadyBooked($job_id, $cuser->id, $job->due)) {
+                if ($job->status == 'pending' && Job::insertTranslatorJobRel($cuser->id, $job_id)) {
+                    $job->status = 'assigned';
+                    $job->save();
+                    $user = $job->user()->get()->first();
+                    $mailer = new AppMailer();
 
-                if (!empty($job->user_email)) {
-                    $email = $job->user_email;
-                    $name = $user->name;
-                    $subject = 'Bekräftelse - tolk har accepterat er bokning (bokning # ' . $job->id . ')';
-                } else {
-                    $email = $user->email;
-                    $name = $user->name;
-                    $subject = 'Bekräftelse - tolk har accepterat er bokning (bokning # ' . $job->id . ')';
+                    if (!empty($job->user_email)) {
+                        $email = $job->user_email;
+                        $name = $user->name;
+                        $subject = 'Bekräftelse - tolk har accepterat er bokning (bokning # ' . $job->id . ')';
+                    } else {
+                        $email = $user->email;
+                        $name = $user->name;
+                        $subject = 'Bekräftelse - tolk har accepterat er bokning (bokning # ' . $job->id . ')';
+                    }
+                    $data = [
+                        'user' => $user,
+                        'job'  => $job
+                    ];
+                    $mailer->send($email, $name, $subject, 'emails.job-accepted', $data);
+
                 }
-                $data = [
-                    'user' => $user,
-                    'job'  => $job
-                ];
-                $mailer->send($email, $name, $subject, 'emails.job-accepted', $data);
-
-            }
-            /*@todo
-                add flash message here.
-            */
-            $jobs = $this->getPotentialJobs($cuser);
-            $response = array();
-            $response['list'] = json_encode(['jobs' => $jobs, 'job' => $job], true);
-            $response['status'] = 'success';
+                /*@todo
+                    add flash message here.
+                */
+                $jobs = $this->getPotentialJobs($cuser);
+                $response = array();
+                $response['list'] = json_encode(['jobs' => $jobs, 'job' => $job], true);
+                $response['status'] = 'success';
         } else {
             $response['status'] = 'fail';
             $response['message'] = 'Du har redan en bokning den tiden! Bokningen är inte accepterad.';
         }
-
         return $response;
+        
+    } catch(ModelNotFoundException $e) {
+            $response['status'] = 'fail';
+            $response['message'] = 'Jon not found.';
+            return $response;
+    }
+        
 
     }
 
@@ -1660,7 +1669,8 @@ class BookingRepository extends BaseRepository
     public function customerNotCall($post_data)
     {
         $completeddate = date('Y-m-d H:i:s');
-        $jobid = $post_data["job_id"];
+        //One of the examples which can be used for all data assignemnts
+        $jobid = $post_data["job_id"] ?? ""; //Need to use conditional assigment here of validate data in controller before passing to repository
         $job_detail = Job::with('translatorJobRel')->find($jobid);
         $duedate = $job_detail->due;
         $start = date_create($duedate);
@@ -1676,7 +1686,7 @@ class BookingRepository extends BaseRepository
         $tr->completed_by = $tr->user_id;
         $job->save();
         $tr->save();
-        $response['status'] = 'success';
+        $response['status'] = $job->save() && $tr->save() ? 'success' : 'error';
         return $response;
     }
 
@@ -2116,6 +2126,8 @@ class BookingRepository extends BaseRepository
         $userid = $request['userid'];
 
         $job = Job::find($jobid);
+        if(is_null($job))
+            return false;
         $job = $job->toArray();
 
         $data = array();

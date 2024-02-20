@@ -41,7 +41,7 @@ class UserRepository extends BaseRepository
         $this->logger->pushHandler(new FirePHPHandler());
     }
 
-    public function createOrUpdate($id = null, $request)
+    public static function createOrUpdate($id = null, $request)
     { 
         $model = is_null($id) ? new User : User::findOrFail($id);
         $model->user_type = $request['role'];
